@@ -1,0 +1,6 @@
+{
+  "name": "GroqChat",
+  "description": "Fast AI chat with typeset formulas, full-screen code & math viewers, Mermaid diagrams, SVG rendering, and syntax coloring.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
