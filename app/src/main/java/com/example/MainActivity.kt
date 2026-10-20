@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,6 +40,7 @@ import com.example.model.ChatMessage
 import com.example.model.MessageRole
 import com.example.ui.components.*
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.wordprocessor.WordProcessorLayout
 import com.example.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
 
@@ -61,7 +63,6 @@ fun GroqChatAppScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
@@ -81,15 +82,8 @@ fun GroqChatAppScreen(
     val isListeningSpeech by viewModel.isListeningSpeech.collectAsStateWithLifecycle()
     val speakingMessageContent by viewModel.speakingMessageContent.collectAsStateWithLifecycle()
 
-    val listState = rememberLazyListState()
-
-    // Auto-scroll to bottom on new messages
-    val messages = currentSession?.messages ?: emptyList()
-    LaunchedEffect(messages.size, isGenerating) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
-        }
-    }
+    // Layout mode: Word Processor (Default) vs Messenger Chat View
+    var useWordProcessorLayout by remember { mutableStateOf(true) }
 
     // Speech Audio permission launcher
     val audioPermissionLauncher = rememberLauncherForActivityResult(
@@ -102,415 +96,135 @@ fun GroqChatAppScreen(
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(
-                modifier = Modifier.width(310.dp)
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (useWordProcessorLayout) {
+            // Famous Word Processor Layout (Office / Google Docs style Paper Document & Ribbon)
+            WordProcessorLayout(
+                currentSession = currentSession,
+                sessions = sessions,
+                settings = settings,
+                isGenerating = isGenerating,
+                inputText = inputText,
+                onInputTextChange = { viewModel.inputText.value = it },
+                onSendMessage = { explicit -> viewModel.sendMessage(explicit) },
+                onSelectSession = { viewModel.selectSession(it) },
+                onNewDocument = { viewModel.createNewSession() },
+                onDeleteDocument = { viewModel.deleteSession(it) },
+                onOpenSettings = { viewModel.showSettingsDialog.value = true },
+                onExpandCode = { viewModel.fullScreenCodeBlock.value = it },
+                onExpandFormula = { viewModel.fullScreenFormulaBlock.value = it },
+                onExpandMermaid = { viewModel.fullScreenMermaidBlock.value = it },
+                onExpandSvg = { viewModel.fullScreenSvgBlock.value = it },
+                onToggleSpeech = {
+                    val hasRecordPermission = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+
+                    if (hasRecordPermission) {
+                        viewModel.toggleSpeechRecognition()
+                    } else {
+                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                isListeningSpeech = isListeningSpeech,
+                onSpeakText = { viewModel.speakText(it) }
+            )
+        } else {
+            // Alternative Messenger Chat Layout
+            MessengerChatLayout(
+                viewModel = viewModel,
+                currentSession = currentSession,
+                sessions = sessions,
+                currentSessionId = currentSessionId,
+                settings = settings,
+                inputText = inputText,
+                isGenerating = isGenerating,
+                isListeningSpeech = isListeningSpeech,
+                speakingMessageContent = speakingMessageContent,
+                onToggleSpeech = {
+                    val hasRecordPermission = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+
+                    if (hasRecordPermission) {
+                        viewModel.toggleSpeechRecognition()
+                    } else {
+                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                onSwitchToWordProcessor = { useWordProcessorLayout = true }
+            )
+        }
+
+        // Floating Layout Switcher Chip (allows toggling between Word Processor & Chat at any time)
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+            shadowElevation = 6.dp,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 96.dp, end = 12.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .clickable { useWordProcessorLayout = !useWordProcessorLayout }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Drawer Header
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
-                        .padding(20.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.Bolt,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                "GroqChat AI",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                "Formulas • Code • Diagrams",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            viewModel.createNewSession()
-                            coroutineScope.launch { drawerState.close() }
-                        },
-                        modifier = Modifier.fillMaxWidth().testTag("new_chat_button")
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("New Chat")
-                    }
-                }
-
-                HorizontalDivider()
-
-                // Chat Sessions List
-                Text(
-                    text = "Recent Chats",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 6.dp)
+                Icon(
+                    imageVector = if (useWordProcessorLayout) Icons.Default.Chat else Icons.Default.Description,
+                    contentDescription = "Toggle View",
+                    tint = Color(0xFF2563EB),
+                    modifier = Modifier.size(16.dp)
                 )
-
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(sessions) { session ->
-                        val isSelected = session.id == currentSessionId
-                        NavigationDrawerItem(
-                            icon = {
-                                Icon(
-                                    imageVector = if (isSelected) Icons.Default.ChatBubble else Icons.Default.ChatBubbleOutline,
-                                    contentDescription = null
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = session.title,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            badge = {
-                                IconButton(
-                                    onClick = { viewModel.deleteSession(session.id) },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.DeleteOutline,
-                                        contentDescription = "Delete chat",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            },
-                            selected = isSelected,
-                            onClick = {
-                                viewModel.selectSession(session.id)
-                                coroutineScope.launch { drawerState.close() }
-                            },
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-
-                HorizontalDivider()
-
-                // Drawer Footer Settings Link
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    label = { Text("Settings & API Key") },
-                    selected = false,
-                    onClick = {
-                        viewModel.showSettingsDialog.value = true
-                        coroutineScope.launch { drawerState.close() }
-                    },
-                    modifier = Modifier.padding(12.dp)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (useWordProcessorLayout) "Chat View" else "Doc View",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
-    ) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "GroqChat",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer
-                                ) {
-                                    Text(
-                                        text = settings.selectedModel.split("-").take(2).joinToString(" "),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = currentSession?.title ?: "Chat",
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(
-                            onClick = { coroutineScope.launch { drawerState.open() } },
-                            modifier = Modifier.testTag("drawer_menu_button")
-                        ) {
-                            Icon(Icons.Default.Menu, contentDescription = "Menu")
-                        }
-                    },
-                    actions = {
-                        // Formula shortcut
-                        IconButton(
-                            onClick = { viewModel.insertFormulaSnippet() },
-                            modifier = Modifier.testTag("shortcut_formula_button")
-                        ) {
-                            Icon(Icons.Default.Functions, contentDescription = "Insert formula")
-                        }
-                        // Settings
-                        IconButton(
-                            onClick = { viewModel.showSettingsDialog.value = true },
-                            modifier = Modifier.testTag("open_settings_button")
-                        ) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    )
-                )
-            },
-            bottomBar = {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 3.dp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .imePadding()
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        // Quick Suggestions / Action bar
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                FilterChip(
-                                    selected = false,
-                                    onClick = { viewModel.insertFormulaSnippet() },
-                                    label = { Text("Formula \$x^2\$", fontSize = 11.sp) },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Functions, contentDescription = null, modifier = Modifier.size(12.dp))
-                                    },
-                                    modifier = Modifier.padding(end = 6.dp).height(28.dp)
-                                )
-                                FilterChip(
-                                    selected = false,
-                                    onClick = { viewModel.insertDiagramSnippet() },
-                                    label = { Text("Mermaid", fontSize = 11.sp) },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.AccountTree, contentDescription = null, modifier = Modifier.size(12.dp))
-                                    },
-                                    modifier = Modifier.height(28.dp)
-                                )
-                            }
 
-                            if (messages.isNotEmpty()) {
-                                TextButton(
-                                    onClick = { viewModel.clearCurrentSession() },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(26.dp)
-                                ) {
-                                    Text("Clear Chat", style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        // Input Box Row
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Speech Recognition Voice Button
-                            IconButton(
-                                onClick = {
-                                    val hasRecordPermission = ContextCompat.checkSelfPermission(
-                                        context,
-                                        Manifest.permission.RECORD_AUDIO
-                                    ) == PackageManager.PERMISSION_GRANTED
-
-                                    if (hasRecordPermission) {
-                                        viewModel.toggleSpeechRecognition()
-                                    } else {
-                                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(42.dp)
-                                    .background(
-                                        if (isListeningSpeech) MaterialTheme.colorScheme.errorContainer
-                                        else MaterialTheme.colorScheme.surfaceVariant,
-                                        CircleShape
-                                    )
-                                    .testTag("voice_input_button")
-                            ) {
-                                Icon(
-                                    imageVector = if (isListeningSpeech) Icons.Default.MicOff else Icons.Default.Mic,
-                                    contentDescription = "Voice prompt",
-                                    tint = if (isListeningSpeech) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            OutlinedTextField(
-                                value = inputText,
-                                onValueChange = { viewModel.inputText.value = it },
-                                placeholder = { Text("Ask anything (supports \$math\$, code, diagrams)...") },
-                                maxLines = 4,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("chat_input_field"),
-                                shape = RoundedCornerShape(20.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                )
-                            )
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            // Send Button
-                            IconButton(
-                                onClick = { viewModel.sendMessage() },
-                                enabled = inputText.isNotBlank() && !isGenerating,
-                                modifier = Modifier
-                                    .size(42.dp)
-                                    .background(
-                                        if (inputText.isNotBlank() && !isGenerating) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.surfaceVariant,
-                                        CircleShape
-                                    )
-                                    .testTag("send_message_button")
-                            ) {
-                                if (isGenerating) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimary
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Send,
-                                        contentDescription = "Send",
-                                        tint = if (inputText.isNotBlank()) MaterialTheme.colorScheme.onPrimary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        ) { paddingValues ->
-            Box(
+        // Error notification banner
+        errorMessage?.let { error ->
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(8.dp),
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .align(Alignment.TopCenter)
             ) {
-                if (messages.isEmpty()) {
-                    // Empty state prompt suggestions
-                    EmptyChatSuggestions(
-                        onSelectSuggestion = { suggestion ->
-                            viewModel.sendMessage(suggestion)
-                        }
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
                     )
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 4.dp),
-                        contentPadding = PaddingValues(vertical = 12.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { viewModel.errorMessage.value = null },
+                        modifier = Modifier.size(24.dp)
                     ) {
-                        items(messages, key = { it.id }) { message ->
-                            ChatMessageItem(
-                                message = message,
-                                onExpandCode = { codeBlock ->
-                                    viewModel.fullScreenCodeBlock.value = codeBlock
-                                },
-                                onExpandFormula = { formulaBlock ->
-                                    viewModel.fullScreenFormulaBlock.value = formulaBlock
-                                },
-                                onExpandMermaid = { mermaidBlock ->
-                                    viewModel.fullScreenMermaidBlock.value = mermaidBlock
-                                },
-                                onExpandSvg = { svgBlock ->
-                                    viewModel.fullScreenSvgBlock.value = svgBlock
-                                },
-                                onSpeak = { text ->
-                                    viewModel.speakText(text)
-                                },
-                                onRegenerate = {
-                                    viewModel.regenerateLastResponse()
-                                },
-                                isSpeakingThis = speakingMessageContent == message.content
-                            )
-                        }
-                    }
-                }
-
-                // Error notification banner
-                errorMessage?.let { error ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                            .align(Alignment.TopCenter)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = error,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = { viewModel.errorMessage.value = null },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Dismiss error",
-                                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Dismiss error",
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }
@@ -557,82 +271,204 @@ fun GroqChatAppScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EmptyChatSuggestions(
-    onSelectSuggestion: (String) -> Unit
+fun MessengerChatLayout(
+    viewModel: ChatViewModel,
+    currentSession: com.example.model.ChatSession?,
+    sessions: List<com.example.model.ChatSession>,
+    currentSessionId: String,
+    settings: com.example.model.AppSettings,
+    inputText: String,
+    isGenerating: Boolean,
+    isListeningSpeech: Boolean,
+    speakingMessageContent: String?,
+    onToggleSpeech: () -> Unit,
+    onSwitchToWordProcessor: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.AutoAwesome,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(36.dp)
-            )
+    val coroutineScope = rememberCoroutineScope()
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val listState = rememberLazyListState()
+    val messages = currentSession?.messages ?: emptyList()
+
+    LaunchedEffect(messages.size, isGenerating) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
         }
+    }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "GroqChat AI",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Text(
-            text = "Typeset Math • Full-Screen Code • Diagrams",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        val suggestions = listOf(
-            "Explain quantum harmonic oscillators with formulas ${'$'}E_n = (n + \\frac{1}{2})\\hbar\\omega${'$'}",
-            "Write a thread-safe LRU cache algorithm in Rust with tests",
-            "Generate a Mermaid flowchart diagram of OAuth 2.0 PKCE flow",
-            "Create an SVG vector badge for a cloud computing platform"
-        )
-
-        suggestions.forEach { prompt ->
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onSelectSuggestion(prompt) }
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(modifier = Modifier.width(310.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
+                        .padding(20.dp)
                 ) {
-                    Icon(
-                        Icons.Default.Lightbulb,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = prompt,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF2563EB)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Description, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text("GroqChat", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text("Document & Chat Studio", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            viewModel.createNewSession()
+                            coroutineScope.launch { drawerState.close() }
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("new_chat_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("New Document / Chat")
+                    }
+                }
+
+                HorizontalDivider()
+
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(sessions) { session ->
+                        val isSelected = session.id == currentSessionId
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.Description, contentDescription = null) },
+                            label = { Text(session.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            badge = {
+                                IconButton(
+                                    onClick = { viewModel.deleteSession(session.id) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", modifier = Modifier.size(16.dp))
+                                }
+                            },
+                            selected = isSelected,
+                            onClick = {
+                                viewModel.selectSession(session.id)
+                                coroutineScope.launch { drawerState.close() }
+                            },
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
+                    label = { Text("Word Processor View") },
+                    selected = false,
+                    onClick = {
+                        onSwitchToWordProcessor()
+                        coroutineScope.launch { drawerState.close() }
+                    },
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("GroqChat", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                                    Text(settings.selectedModel.split("-").take(2).joinToString(" "), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            Text(currentSession?.title ?: "Document", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { viewModel.showSettingsDialog.value = true }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
+                    }
+                )
+            },
+            bottomBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 3.dp,
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = onToggleSpeech,
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .background(if (isListeningSpeech) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = if (isListeningSpeech) Icons.Default.MicOff else Icons.Default.Mic,
+                                    contentDescription = "Voice prompt",
+                                    tint = if (isListeningSpeech) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = inputText,
+                                onValueChange = { viewModel.inputText.value = it },
+                                placeholder = { Text("Ask anything (supports \$math\$, code, diagrams)...") },
+                                maxLines = 4,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            IconButton(
+                                onClick = { viewModel.sendMessage() },
+                                enabled = inputText.isNotBlank() && !isGenerating,
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .background(if (inputText.isNotBlank() && !isGenerating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                            ) {
+                                if (isGenerating) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                } else {
+                                    Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = if (inputText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ) { paddingValues ->
+            Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+                    items(messages, key = { it.id }) { message ->
+                        ChatMessageItem(
+                            message = message,
+                            onExpandCode = { viewModel.fullScreenCodeBlock.value = it },
+                            onExpandFormula = { viewModel.fullScreenFormulaBlock.value = it },
+                            onExpandMermaid = { viewModel.fullScreenMermaidBlock.value = it },
+                            onExpandSvg = { viewModel.fullScreenSvgBlock.value = it },
+                            onSpeak = { viewModel.speakText(it) },
+                            onRegenerate = { viewModel.regenerateLastResponse() },
+                            isSpeakingThis = speakingMessageContent == message.content
+                        )
+                    }
                 }
             }
         }
